@@ -372,9 +372,10 @@ foreach ($job in $jobs) {
 }
 
 # Initialize report
-$currentDate = Get-Date
-$report = "===== Comprehensive System Report for Repair Technicians =====\n"
-$report += "Generated on: $($currentDate.ToString('yyyy-MM-dd    hh:mm tt'))  ($($currentDate.DayOfWeek))\n\n"
+$now = Get-Date
+$dayOfWeek = $now.ToString('dddd')
+$report = "===== Comprehensive System Report for Repair Technicians =====`n"
+$report += "Generated on: $($now.ToString('yyyy-MM-dd    hh:mm tt'))  ($dayOfWeek)`n`n"
 
 # Process Windows Update Status first
 if ($tasks.Name -contains "WindowsUpdateStatus") {
