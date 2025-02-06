@@ -315,35 +315,29 @@ $tasks = @(
 
         # Return results sorted by size
         if ($largeFiles.Count -gt 0) {
-          Write-Host "Preparing file list for report..." -ForegroundColor Cyan
-          $sortedFiles = $largeFiles | Sort-Object SizeGB -Descending | Select-Object -First 50
-          Write-Host "File list ready." -ForegroundColor Green
-          $sortedFiles
+          $largeFiles | Sort-Object SizeGB -Descending | Select-Object -First 50
         }
         else {
-          Write-Host "No large files to report." -ForegroundColor Yellow
-          $null
+          @()
         }
       }
       catch {
         Write-Warning "Error in file scan: $($_.Exception.Message)"
-        $null
+        @()
       }
     }
   }
 )
 
-# Run FindLargeFiles task first to show progress
+# Run FindLargeFiles task first
 Write-Host "`nStarting file scan...`n" -ForegroundColor Yellow
 Write-Host "Note: The scan will show real-time progress as it checks each folder." -ForegroundColor Cyan
 Write-Host "Large files (>$minSizeGB GB) will be highlighted in green as they are found.`n" -ForegroundColor Cyan
 
 $findLargeFilesTask = $tasks | Where-Object { $_.Name -eq "FindLargeFiles" }
-$results = @{}
-Write-Host "Running file scan..." -ForegroundColor Yellow
 $largeFilesResult = & $findLargeFilesTask.ScriptBlock -minSizeGB $minSizeGB
-Write-Host "File scan complete." -ForegroundColor Green
-$results["FindLargeFiles"] = $largeFilesResult
+$results = @{}
+$results["FindLargeFiles"] = @($largeFilesResult)
 
 # Start other tasks as background jobs
 $jobs = @()
@@ -358,7 +352,6 @@ Write-Host "`nGathering system information..." -ForegroundColor Yellow
 Wait-Job -Job $jobs
 
 # Retrieve job results
-$results = @{}
 foreach ($job in $jobs) {
   if ($job.State -eq 'Completed') {
     try {
@@ -379,8 +372,9 @@ foreach ($job in $jobs) {
 }
 
 # Initialize report
-$report = "===== Comprehensive System Report for Repair Technicians =====`n"
-$report += "Generated on: $(Get-Date -Format 'yyyy-MM-dd    hh:mm tt')  ($(Get-Date).DayOfWeek)`n`n"
+$currentDate = Get-Date
+$report = "===== Comprehensive System Report for Repair Technicians =====\n"
+$report += "Generated on: $($currentDate.ToString('yyyy-MM-dd    hh:mm tt'))  ($($currentDate.DayOfWeek))\n\n"
 
 # Process Windows Update Status first
 if ($tasks.Name -contains "WindowsUpdateStatus") {
@@ -405,8 +399,6 @@ foreach ($task in $tasks) {
   $name = $task.Name
   # Skip WindowsUpdateStatus as it's already processed
   if ($name -eq "WindowsUpdateStatus") { continue }
-
-  Write-Host "Processing $name for report..." -ForegroundColor Cyan
   $data = $results[$name]
   switch ($name) {
     "SystemInfo" {
@@ -490,13 +482,9 @@ foreach ($task in $tasks) {
       }
       $report += "`n"
     }
-    "CoreParkingStatus" {
-      $report += "--- Core Parking Status ---`n"
-      $report += "Core Parking Status: $($data)`n`n"
-    }
     "FindLargeFiles" {
       $report += "--- Largest Files Report (Top 50) ---`n"
-      if ($data -ne "N/A") {
+      if ($data -and $data.Count -gt 0) {
         $report += "File Size (GB)  | Last Modified       | File Path`n"
         $report += "--------------- | ------------------- | ----------`n"
         foreach ($file in $data) {
@@ -504,7 +492,7 @@ foreach ($task in $tasks) {
         }
       }
       else {
-        $report += "Large files information unavailable.`n"
+        $report += "No large files found.`n"
       }
       $report += "`n"
     }
