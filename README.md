@@ -1,4 +1,4 @@
-# SYSTEM-REPORT-TOOL
+# System Report Tool 2025
 
 ## Description
 
@@ -37,20 +37,20 @@ software, and configuration.
 
 ## Installation
 
-1.  Ensure PowerShell is installed on your system. (It is typically
-    pre-installed on Windows systems.)
-2.  Save the `SYSTEM-REPORT-TOOL.ps1` script to a directory of your choice.
+1. Ensure PowerShell is installed on your system. (It is typically pre-installed
+   on Windows systems.)
+2. Save the `SYSTEM-REPORT-TOOL.ps1` script to a directory of your choice.
 
 ## Usage
 
-1.  Open PowerShell as an administrator. (The script will attempt to elevate
-    itself if run without admin privileges.)
-2.  Navigate to the directory where you saved the script.
-3.  Run the script using the command: `.\SYSTEM-REPORT-TOOL.ps1`.
-4.  The script will generate a comprehensive system report and save it to a text
-    file named "COMPREHENSIVE SYSTEM REPORT - by JTG Systems.txt" on your
-    desktop.
-5.  The script will provide speech output and prompt you to open the report.
+1. Open PowerShell as an administrator. (The script will attempt to elevate
+   itself if run without admin privileges.)
+2. Navigate to the directory where you saved the script.
+3. Run the script using the command: `.\SYSTEM-REPORT-TOOL.ps1`.
+4. The script will generate a comprehensive system report and save it to a text
+   file named "COMPREHENSIVE SYSTEM REPORT - by JTG Systems.txt" on your
+   desktop.
+5. The script will provide speech output and prompt you to open the report.
 
 ## Configuration
 
