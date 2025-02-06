@@ -63,6 +63,44 @@ behavior:
 - `$minSizeGB`: Specifies the minimum size (in GB) for files to be considered
   "large" in the large files report. Defaults to `0.1`.
 
+## Robust Data Acquisition Methodology
+
+The System Report Tool 2025 employs a methodology designed to acquire system
+data reliably and comprehensively. The following principles are applied:
+
+- **Error Handling:** Each data acquisition task is enclosed in `try-catch`
+  blocks to handle potential errors gracefully. This prevents the script from
+  crashing and ensures that the report includes as much information as possible,
+  even if some data sources are unavailable. Specific error messages are
+  provided where possible.
+- **Data Source Prioritization:** The script prioritizes the use of modern
+  PowerShell cmdlets and WMI/CIM for data retrieval. Where possible, deprecated
+  methods are avoided in favor of more reliable and efficient alternatives.
+- **Performance Optimization:** The script uses background jobs (`Start-Job`) to
+  collect data concurrently, improving overall performance. The large file
+  search is optimized by limiting the number of files returned.
+- **Data Validation:** The script validates data where appropriate (e.g.,
+  checking for null values) to ensure data integrity.
+- **Specific Data Acquisition Methods:**
+  - **Windows Update Status:** Uses the `Microsoft.Update.Session` COM object.
+    Future improvements could include using the `Get-WindowsUpdateLog` cmdlet or
+    other more modern methods.
+  - **System Information, Memory Information, Disk Information, Graphics
+    Information, Startup Programs:** Uses `Get-CimInstance` to retrieve
+    information from WMI/CIM. Error handling is implemented.
+  - **Network Information:** Uses `Get-NetAdapter`. Error handling is
+    implemented.
+  - **Power and Battery Information:** Uses `powercfg /GetActiveScheme` and
+    `Get-CimInstance` (Win32_Battery). Error handling is implemented.
+  - **System Uptime:** Calculates uptime based on the last boot time.
+  - **Installed Software:** Uses `Get-CimInstance` (Win32_Product). This method
+    can be slow and unreliable. Future improvements could include using
+    alternative methods for retrieving installed software information, such as
+    querying the registry or using the `Get-Package` cmdlet (if available).
+  - **FindLargeFiles:** Uses `Get-ChildItem` to search for large files. The
+    search is limited to the user's profile directory and the top 50 largest
+    files are returned.
+
 ## Attribution
 
 Credit: [https://www.jtgsystems.com](https://www.jtgsystems.com)
