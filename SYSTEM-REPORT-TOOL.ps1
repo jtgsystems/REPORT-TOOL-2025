@@ -253,115 +253,108 @@ $tasks = @(
     ScriptBlock = {
       param($minSizeGB)
       try {
-        Write-Host "`nStarting file scan..." -ForegroundColor Yellow
-
-        # Get all drives except removable ones
-        $drives = Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DriveType=3" |
-        Select-Object -ExpandProperty DeviceID
-
-        Write-Host "Found drives to scan: $($drives -join ', ')" -ForegroundColor Cyan
+        # Initialize variables
         $largeFiles = [System.Collections.ArrayList]::new()
         $totalScanned = 0
         $errorCount = 0
+        $GB = 1GB
 
-        foreach ($drive in $drives) {
-          Write-Host "`nScanning drive ${drive}..." -ForegroundColor Yellow
+        Write-Host "`nStarting file scan..." -ForegroundColor Yellow
 
-          # Skip system folders and user temp folders
-          $excludedPaths = @(
-            "${drive}\Windows",
-            "${drive}\Program Files",
-            "${drive}\Program Files (x86)",
-            $env:TEMP,
-            $env:TMP
-          )
+        # Get user profile path
+        $scanPath = $env:USERPROFILE
+        Write-Host "Scanning path: $scanPath" -ForegroundColor Cyan
 
-          Write-Host "Excluded paths on drive ${drive}:" -ForegroundColor Cyan
-          $excludedPaths | ForEach-Object { Write-Host "  $_" -ForegroundColor Gray }
+        # Define excluded paths
+        $excludedPaths = @(
+          [System.IO.Path]::Combine($scanPath, 'AppData'),
+          [System.IO.Path]::Combine($scanPath, 'Local Settings'),
+          [System.IO.Path]::Combine($scanPath, 'Application Data')
+        )
 
-          # Create a workflow to handle the file scanning more efficiently
-          $folders = [System.Collections.ArrayList]::new()
+        Write-Host "Excluded paths:" -ForegroundColor Cyan
+        $excludedPaths | ForEach-Object { Write-Host "  $_" -ForegroundColor Gray }
 
-          try {
-            # Get initial list of folders, excluding system paths
-            Get-ChildItem -Path $drive\ -Directory -ErrorAction Stop |
-            Where-Object {
-              $folder = $_
-              -not ($excludedPaths | Where-Object { $folder.FullName.StartsWith($_) })
-            } | ForEach-Object { [void]$folders.Add($_.FullName) }
-          }
-          catch {
-            Write-Warning "Error accessing root of ${drive}: $($_.Exception.Message)"
-            continue
-          }
+        # Get all files
+        Get-ChildItem -Path $scanPath -File -Recurse -ErrorAction SilentlyContinue -ErrorVariable +errors |
+        ForEach-Object {
+          $file = $_
+          $totalScanned++
 
-          # Process each folder
-          while ($folders.Count -gt 0) {
-            $currentFolder = $folders[0]
-            [void]$folders.RemoveAt(0)
-
-            try {
-              # Get subfolders
-              Get-ChildItem -Path $currentFolder -Directory -ErrorAction Stop |
-              ForEach-Object { [void]$folders.Add($_.FullName) }
-
-              # Get files
-              Write-Host "Scanning folder: $currentFolder" -ForegroundColor DarkGray
-              Get-ChildItem -Path $currentFolder -File -ErrorAction Stop | ForEach-Object {
-                $totalScanned++
-                if ($totalScanned % 100 -eq 0) {
-                  Write-Host "Files scanned: $totalScanned (Errors: $errorCount)" -ForegroundColor Gray
-                }
-
-                if ($_.Length -ge ($minSizeGB * 1GB)) {
-                  $fileInfo = [PSCustomObject]@{
-                    SizeGB       = [math]::Round($_.Length / 1GB, 2)
-                    Path         = $_.FullName
-                    LastModified = $_.LastWriteTime
-                  }
-                  [void]$largeFiles.Add($fileInfo)
-                  Write-Host "[LARGE FILE] Size: $($fileInfo.SizeGB) GB | Path: $($fileInfo.Path)" -ForegroundColor Green
-                }
-              }
+          # Show progress every 100 files
+          if ($totalScanned % 100 -eq 0) {
+            $currentPath = $file.DirectoryName
+            if ($currentPath.Length > 50) {
+              $currentPath = '...' + $currentPath.Substring($currentPath.Length - 50)
             }
-            catch {
-              $errorCount++
-              if ($errorCount % 100 -eq 0) {
-                Write-Warning "Multiple access errors occurred. Latest: $($_.Exception.Message)"
+            Write-Host "Files scanned: $totalScanned | Current: $currentPath" -ForegroundColor Gray
+          }
+
+          # Skip excluded paths
+          if (-not ($excludedPaths | Where-Object { $file.FullName.StartsWith($_, [StringComparison]::OrdinalIgnoreCase) })) {
+            # Check file size
+            if ($file.Length -ge ($minSizeGB * $GB)) {
+              $fileInfo = [PSCustomObject]@{
+                SizeGB       = [math]::Round($file.Length / $GB, 2)
+                Path         = $file.FullName
+                LastModified = $file.LastWriteTime
               }
-              continue
+              [void]$largeFiles.Add($fileInfo)
+              Write-Host "[LARGE FILE] Size: $($fileInfo.SizeGB) GB | $($fileInfo.Path)" -ForegroundColor Green
             }
           }
         }
 
-        Write-Host "`nFile scan complete!" -ForegroundColor Yellow
+        # Count access errors
+        $errorCount = ($errors | Where-Object { $_ -is [System.UnauthorizedAccessException] }).Count
+
+        Write-Host "`nScan Summary:" -ForegroundColor Yellow
         Write-Host "Total files scanned: $totalScanned" -ForegroundColor Cyan
-        Write-Host "Access errors encountered: $errorCount" -ForegroundColor Yellow
+        Write-Host "Access errors: $errorCount" -ForegroundColor Cyan
         Write-Host "Large files found: $($largeFiles.Count)" -ForegroundColor Cyan
 
-        $largeFiles | Sort-Object SizeGB -Descending | Select-Object -First 50
+        # Return results sorted by size
+        if ($largeFiles.Count -gt 0) {
+          Write-Host "Preparing file list for report..." -ForegroundColor Cyan
+          $sortedFiles = $largeFiles | Sort-Object SizeGB -Descending | Select-Object -First 50
+          Write-Host "File list ready." -ForegroundColor Green
+          $sortedFiles
+        }
+        else {
+          Write-Host "No large files to report." -ForegroundColor Yellow
+          $null
+        }
       }
       catch {
-        Write-Warning "Error finding large files: $($_.Exception.Message)"
-        "N/A"
+        Write-Warning "Error in file scan: $($_.Exception.Message)"
+        $null
       }
     }
   }
 )
 
-# Start all tasks as background jobs
+# Run FindLargeFiles task first to show progress
+Write-Host "`nStarting file scan...`n" -ForegroundColor Yellow
+Write-Host "Note: The scan will show real-time progress as it checks each folder." -ForegroundColor Cyan
+Write-Host "Large files (>$minSizeGB GB) will be highlighted in green as they are found.`n" -ForegroundColor Cyan
+
+$findLargeFilesTask = $tasks | Where-Object { $_.Name -eq "FindLargeFiles" }
+$results = @{}
+Write-Host "Running file scan..." -ForegroundColor Yellow
+$largeFilesResult = & $findLargeFilesTask.ScriptBlock -minSizeGB $minSizeGB
+Write-Host "File scan complete." -ForegroundColor Green
+$results["FindLargeFiles"] = $largeFilesResult
+
+# Start other tasks as background jobs
 $jobs = @()
 foreach ($task in $tasks) {
-  if ($task.Name -eq "FindLargeFiles") {
-    $jobs += Start-Job -Name $task.Name -ScriptBlock $task.ScriptBlock -ArgumentList $minSizeGB
-  }
-  else {
+  if ($task.Name -ne "FindLargeFiles") {
     $jobs += Start-Job -Name $task.Name -ScriptBlock $task.ScriptBlock
   }
 }
 
 # Wait for all jobs to complete
-Write-Host "Scanning for Large Files. Please wait....takes a few minutes on some machines!" -ForegroundColor Yellow
+Write-Host "`nGathering system information..." -ForegroundColor Yellow
 Wait-Job -Job $jobs
 
 # Retrieve job results
@@ -412,6 +405,8 @@ foreach ($task in $tasks) {
   $name = $task.Name
   # Skip WindowsUpdateStatus as it's already processed
   if ($name -eq "WindowsUpdateStatus") { continue }
+
+  Write-Host "Processing $name for report..." -ForegroundColor Cyan
   $data = $results[$name]
   switch ($name) {
     "SystemInfo" {
