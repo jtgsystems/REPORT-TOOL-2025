@@ -253,37 +253,90 @@ $tasks = @(
     ScriptBlock = {
       param($minSizeGB)
       try {
+        Write-Host "`nStarting file scan..." -ForegroundColor Yellow
+
         # Get all drives except removable ones
         $drives = Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DriveType=3" |
         Select-Object -ExpandProperty DeviceID
 
+        Write-Host "Found drives to scan: $($drives -join ', ')" -ForegroundColor Cyan
         $largeFiles = [System.Collections.ArrayList]::new()
+        $totalScanned = 0
+        $errorCount = 0
 
         foreach ($drive in $drives) {
+          Write-Host "`nScanning drive ${drive}..." -ForegroundColor Yellow
+
           # Skip system folders and user temp folders
           $excludedPaths = @(
-            "$drive\Windows",
-            "$drive\Program Files",
-            "$drive\Program Files (x86)",
+            "${drive}\Windows",
+            "${drive}\Program Files",
+            "${drive}\Program Files (x86)",
             $env:TEMP,
             $env:TMP
           )
 
-          Get-ChildItem -Path $drive\ -File -Recurse -ErrorAction SilentlyContinue |
-          Where-Object {
-            $file = $_
-            # Check if file path starts with any excluded path
-            -not ($excludedPaths | Where-Object { $file.FullName.StartsWith($_) })
-          } |
-          Where-Object { $_.Length -ge ($minSizeGB * 1GB) } |
-          ForEach-Object {
-            [void]$largeFiles.Add([PSCustomObject]@{
-                SizeGB       = [math]::Round($_.Length / 1GB, 2)
-                Path         = $_.FullName
-                LastModified = $_.LastWriteTime
-              })
+          Write-Host "Excluded paths on drive ${drive}:" -ForegroundColor Cyan
+          $excludedPaths | ForEach-Object { Write-Host "  $_" -ForegroundColor Gray }
+
+          # Create a workflow to handle the file scanning more efficiently
+          $folders = [System.Collections.ArrayList]::new()
+
+          try {
+            # Get initial list of folders, excluding system paths
+            Get-ChildItem -Path $drive\ -Directory -ErrorAction Stop |
+            Where-Object {
+              $folder = $_
+              -not ($excludedPaths | Where-Object { $folder.FullName.StartsWith($_) })
+            } | ForEach-Object { [void]$folders.Add($_.FullName) }
+          }
+          catch {
+            Write-Warning "Error accessing root of ${drive}: $($_.Exception.Message)"
+            continue
+          }
+
+          # Process each folder
+          while ($folders.Count -gt 0) {
+            $currentFolder = $folders[0]
+            [void]$folders.RemoveAt(0)
+
+            try {
+              # Get subfolders
+              Get-ChildItem -Path $currentFolder -Directory -ErrorAction Stop |
+              ForEach-Object { [void]$folders.Add($_.FullName) }
+
+              # Get files
+              Get-ChildItem -Path $currentFolder -File -ErrorAction Stop | ForEach-Object {
+                $totalScanned++
+                if ($totalScanned % 1000 -eq 0) {
+                  Write-Host "Files scanned: $totalScanned (Errors: $errorCount)" -ForegroundColor Gray
+                }
+
+                if ($_.Length -ge ($minSizeGB * 1GB)) {
+                  $fileInfo = [PSCustomObject]@{
+                    SizeGB       = [math]::Round($_.Length / 1GB, 2)
+                    Path         = $_.FullName
+                    LastModified = $_.LastWriteTime
+                  }
+                  [void]$largeFiles.Add($fileInfo)
+                  Write-Host "Found large file: $($fileInfo.Path) ($($fileInfo.SizeGB) GB)" -ForegroundColor Green
+                }
+              }
+            }
+            catch {
+              $errorCount++
+              if ($errorCount % 100 -eq 0) {
+                Write-Warning "Multiple access errors occurred. Latest: $($_.Exception.Message)"
+              }
+              continue
+            }
           }
         }
+
+        Write-Host "`nFile scan complete!" -ForegroundColor Yellow
+        Write-Host "Total files scanned: $totalScanned" -ForegroundColor Cyan
+        Write-Host "Access errors encountered: $errorCount" -ForegroundColor Yellow
+        Write-Host "Large files found: $($largeFiles.Count)" -ForegroundColor Cyan
 
         $largeFiles | Sort-Object SizeGB -Descending | Select-Object -First 50
       }
