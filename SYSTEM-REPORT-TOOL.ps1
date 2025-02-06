@@ -306,9 +306,10 @@ $tasks = @(
               ForEach-Object { [void]$folders.Add($_.FullName) }
 
               # Get files
+              Write-Host "Scanning folder: $currentFolder" -ForegroundColor DarkGray
               Get-ChildItem -Path $currentFolder -File -ErrorAction Stop | ForEach-Object {
                 $totalScanned++
-                if ($totalScanned % 1000 -eq 0) {
+                if ($totalScanned % 100 -eq 0) {
                   Write-Host "Files scanned: $totalScanned (Errors: $errorCount)" -ForegroundColor Gray
                 }
 
@@ -319,7 +320,7 @@ $tasks = @(
                     LastModified = $_.LastWriteTime
                   }
                   [void]$largeFiles.Add($fileInfo)
-                  Write-Host "Found large file: $($fileInfo.Path) ($($fileInfo.SizeGB) GB)" -ForegroundColor Green
+                  Write-Host "[LARGE FILE] Size: $($fileInfo.SizeGB) GB | Path: $($fileInfo.Path)" -ForegroundColor Green
                 }
               }
             }
