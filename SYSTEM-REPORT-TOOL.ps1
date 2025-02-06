@@ -33,7 +33,6 @@ Ensure-Administrator
 $ErrorActionPreference = "Continue"
 $outputFile = "$env:USERPROFILE\Desktop\COMPREHENSIVE SYSTEM REPORT - by JTG Systems.txt"
 $minSizeGB = 0.1  # Minimum size in GB for large files
-$searchDirectory = $env:USERPROFILE # Default search directory for large files
 
 Write-Host "Starting Comprehensive System Report Generation..." -ForegroundColor Yellow
 Speak-Text "Starting comprehensive system report generation."
@@ -252,17 +251,37 @@ $tasks = @(
   @{
     Name        = "FindLargeFiles"
     ScriptBlock = {
+      param($minSizeGB)
       try {
-        $minSize = 0.1  # in GB
-        $largeFiles = @()
+        # Get all drives except removable ones
+        $drives = Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DriveType=3" |
+        Select-Object -ExpandProperty DeviceID
 
-        Get-ChildItem -Path $searchDirectory -File -Recurse -ErrorAction SilentlyContinue | ForEach-Object {
-          if ($_.Length -ge ($minSize * 1GB)) {
-            $largeFiles += [PSCustomObject]@{
-              SizeGB       = [math]::Round($_.Length / 1GB, 2)
-              Path         = $_.FullName
-              LastModified = $_.LastWriteTime
-            }
+        $largeFiles = [System.Collections.ArrayList]::new()
+
+        foreach ($drive in $drives) {
+          # Skip system folders and user temp folders
+          $excludedPaths = @(
+            "$drive\Windows",
+            "$drive\Program Files",
+            "$drive\Program Files (x86)",
+            $env:TEMP,
+            $env:TMP
+          )
+
+          Get-ChildItem -Path $drive\ -File -Recurse -ErrorAction SilentlyContinue |
+          Where-Object {
+            $file = $_
+            # Check if file path starts with any excluded path
+            -not ($excludedPaths | Where-Object { $file.FullName.StartsWith($_) })
+          } |
+          Where-Object { $_.Length -ge ($minSizeGB * 1GB) } |
+          ForEach-Object {
+            [void]$largeFiles.Add([PSCustomObject]@{
+                SizeGB       = [math]::Round($_.Length / 1GB, 2)
+                Path         = $_.FullName
+                LastModified = $_.LastWriteTime
+              })
           }
         }
 
@@ -279,11 +298,16 @@ $tasks = @(
 # Start all tasks as background jobs
 $jobs = @()
 foreach ($task in $tasks) {
-  $jobs += Start-Job -Name $task.Name -ScriptBlock $task.ScriptBlock
+  if ($task.Name -eq "FindLargeFiles") {
+    $jobs += Start-Job -Name $task.Name -ScriptBlock $task.ScriptBlock -ArgumentList $minSizeGB
+  }
+  else {
+    $jobs += Start-Job -Name $task.Name -ScriptBlock $task.ScriptBlock
+  }
 }
 
 # Wait for all jobs to complete
-Write-Host "Scaning for Large Files. Please wait....takes a few minutes on some machines!" -ForegroundColor Yellow
+Write-Host "Scanning for Large Files. Please wait....takes a few minutes on some machines!" -ForegroundColor Yellow
 Wait-Job -Job $jobs
 
 # Retrieve job results
