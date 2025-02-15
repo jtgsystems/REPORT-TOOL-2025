@@ -8,10 +8,14 @@ function Speak-Text {
     $synth = New-Object System.Speech.Synthesis.SpeechSynthesizer
     $synth.Rate = 2  # Increase speech rate for faster output
     $synth.Speak($text)
-    $synth.Dispose()
   }
   catch {
     Write-Warning "Speech synthesis not available: $($_.Exception.Message)"
+  }
+  finally {
+    if ($synth) {
+      $synth.Dispose()
+    }
   }
 }
 
@@ -174,13 +178,13 @@ $tasks = @(
     Name        = "PowerInfo"
     ScriptBlock = {
       try {
-      $powerPlanRaw = powercfg /GetActiveScheme
-        # Extract the power plan name from the output using regex
-        if ($powerPlanRaw -match '\((.*?)\)'){
-          $powerPlanName = $matches[1]
+        $powerPlan = powercfg /GETACTIVESCHEME
+        if ($powerPlan -match '([a-f0-9-]{36})') {
+          $guid = $matches[1]
+          $planName = (powercfg /L | Where-Object { $_ -match $guid }) -replace '^.*\((.*)\).*$','$1'
         }
         else {
-          $powerPlanName = $powerPlanRaw
+          $planName = "Unknown"
         }
         $batteryReport = if (Get-CimInstance -ClassName Win32_Battery) {
           Get-CimInstance -ClassName Win32_Battery | Select-Object @{Name = "BatteryStatus"; Expression = {
@@ -204,7 +208,7 @@ $tasks = @(
           "No battery detected"
         }
         @{
-          PowerPlan   = $powerPlanName
+          PowerPlan   = $planName
           BatteryInfo = $batteryReport
         }
       }
@@ -263,69 +267,79 @@ $tasks = @(
         # Initialize variables
         $largeFiles = [System.Collections.ArrayList]::new()
         $totalScanned = 0
-        $errors = @()  # Initialize error container
+        $errors = @()
         $GB = 1GB
-
-        Write-Host "`nStarting file scan..." -ForegroundColor Yellow
-
-        # Get user profile path
+        $progress = 0
+        $excludedPathsRegex = '^.*\\(AppData|Local Settings|Application Data)\\.*$'
+        
+        # Create runspace pool for parallel processing
+        $runspacePool = [runspacefactory]::CreateRunspacePool(1, [Environment]::ProcessorCount)
+        $runspacePool.Open()
+        $jobs = @()
+        
+        Write-Host "`nStarting optimized file scan..." -ForegroundColor Yellow
         $scanPath = $env:USERPROFILE
-        Write-Host "Scanning path: $scanPath" -ForegroundColor Cyan
-
-        # Define excluded paths
-        $excludedPaths = @(
-          [System.IO.Path]::Combine($scanPath, 'AppData'),
-          [System.IO.Path]::Combine($scanPath, 'Local Settings'),
-          [System.IO.Path]::Combine($scanPath, 'Application Data')
-        )
-
-        Write-Host "Excluded paths:" -ForegroundColor Cyan
-        $excludedPaths | ForEach-Object { Write-Host "  $_" -ForegroundColor Gray }
-
-        # Get all files
-        Get-ChildItem -Path $scanPath -File -Recurse -ErrorAction SilentlyContinue -ErrorVariable +errors |
-        ForEach-Object {
-          $file = $_
-          $totalScanned++
-
-          # Show progress every 100 files
-          if ($totalScanned % 100 -eq 0) {
-            $currentPath = $file.DirectoryName
-            if ($currentPath.Length -gt 50) {
-              $currentPath = '...' + $currentPath.Substring($currentPath.Length - 50)
+        
+        # Get directories first
+        $directories = Get-ChildItem -Path $scanPath -Directory -ErrorAction SilentlyContinue |
+                      Where-Object { $_.FullName -notmatch $excludedPathsRegex }
+        
+        # Process each directory in parallel
+        foreach ($dir in $directories) {
+            $powershell = [powershell]::Create().AddScript({
+                param($path, $minSize, $excludedRegex)
+                Get-ChildItem -Path $path -File -Recurse -ErrorAction SilentlyContinue |
+                Where-Object { 
+                    $_.Length -ge $minSize -and 
+                    $_.FullName -notmatch $excludedRegex 
+                } |
+                Select-Object @{
+                    Name='SizeGB'
+                    Expression={ [math]::Round($_.Length / 1GB, 2) }
+                }, 
+                @{
+                    Name='Path'
+                    Expression={ $_.FullName }
+                },
+                LastWriteTime
+            }).AddArgument($dir.FullName).AddArgument($minSizeGB * $GB).AddArgument($excludedPathsRegex)
+            
+            $powershell.RunspacePool = $runspacePool
+            
+            $jobs += @{
+                PowerShell = $powershell
+                Handle = $powershell.BeginInvoke()
             }
-            Write-Host "Files scanned: $totalScanned | Current: $currentPath" -ForegroundColor Gray
-          }
-
-          # Skip files in excluded paths
-          if (-not ($excludedPaths | Where-Object { $file.FullName.StartsWith($_, [StringComparison]::OrdinalIgnoreCase) })) {
-            # Check file size
-            if ($file.Length -ge ($minSizeGB * $GB)) {
-              $fileInfo = [PSCustomObject]@{
-                SizeGB       = [math]::Round($file.Length / $GB, 2)
-                Path         = $file.FullName
-                LastModified = $file.LastWriteTime
-              }
-              [void]$largeFiles.Add($fileInfo)
-              Write-Host "[LARGE FILE] Size: $($fileInfo.SizeGB) GB | $($fileInfo.Path)" -ForegroundColor Green
-            }
-          }
         }
-
-        # Count access errors (if any)
-        $errorCount = ($errors | Where-Object { $_ -is [System.UnauthorizedAccessException] }).Count
-
+        
+        # Collect results
+        $progress = 0
+        $progressWidth = $host.UI.RawUI.WindowSize.Width - 20
+        foreach ($job in $jobs) {
+            $results = $job.PowerShell.EndInvoke($job.Handle)
+            if ($results) {
+                [void]$largeFiles.AddRange($results)
+            }
+            $job.PowerShell.Dispose()
+            
+            # Update progress
+            $progress++
+            $percentComplete = [math]::Round(($progress / $jobs.Count) * 100)
+            Write-Progress -Activity "Scanning directories" -Status "$percentComplete% Complete" -PercentComplete $percentComplete
+        }
+        
+        $runspacePool.Close()
+        $runspacePool.Dispose()
+        
         Write-Host "`nScan Summary:" -ForegroundColor Yellow
-        Write-Host "Total files scanned: $totalScanned" -ForegroundColor Cyan
-        Write-Host "Access errors: $errorCount" -ForegroundColor Cyan
         Write-Host "Large files found: $($largeFiles.Count)" -ForegroundColor Cyan
-
+        
         # Return results sorted by size
         if ($largeFiles.Count -gt 0) {
-          $largeFiles | Sort-Object SizeGB -Descending | Select-Object -First 50
+            $largeFiles | Sort-Object SizeGB -Descending | Select-Object -First 50
         }
         else {
-          @()
+            @()
         }
       }
       catch {
