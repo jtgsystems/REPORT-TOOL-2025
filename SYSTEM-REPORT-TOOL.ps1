@@ -266,7 +266,6 @@ $tasks = @(
       try {
         # Initialize variables
         $largeFiles = [System.Collections.ArrayList]::new()
-        $totalScanned = 0
         $errors = @()
         $GB = 1GB
         $progress = 0
@@ -293,15 +292,13 @@ $tasks = @(
                     $_.Length -ge $minSize -and 
                     $_.FullName -notmatch $excludedRegex 
                 } |
-                Select-Object @{
-                    Name='SizeGB'
-                    Expression={ [math]::Round($_.Length / 1GB, 2) }
-                }, 
-                @{
-                    Name='Path'
-                    Expression={ $_.FullName }
-                },
-                LastWriteTime
+                ForEach-Object {
+                    [PSCustomObject]@{
+                        SizeGB = [math]::Round($_.Length / 1GB, 2)
+                        Path = $_.FullName
+                        LastModified = $_.LastWriteTime
+                    }
+                }
             }).AddArgument($dir.FullName).AddArgument($minSizeGB * $GB).AddArgument($excludedPathsRegex)
             
             $powershell.RunspacePool = $runspacePool
@@ -314,11 +311,12 @@ $tasks = @(
         
         # Collect results
         $progress = 0
-        $progressWidth = $host.UI.RawUI.WindowSize.Width - 20
         foreach ($job in $jobs) {
             $results = $job.PowerShell.EndInvoke($job.Handle)
             if ($results) {
-                [void]$largeFiles.AddRange($results)
+                foreach ($item in $results) {
+                    [void]$largeFiles.Add($item)
+                }
             }
             $job.PowerShell.Dispose()
             
@@ -344,6 +342,7 @@ $tasks = @(
       }
       catch {
         Write-Warning "Error in file scan: $($_.Exception.Message)"
+        Write-Warning "Stack trace: $($_.Exception.StackTrace)"
         @()
       }
     }
