@@ -174,7 +174,14 @@ $tasks = @(
     Name        = "PowerInfo"
     ScriptBlock = {
       try {
-        $powerPlan = powercfg /GetActiveScheme
+      $powerPlanRaw = powercfg /GetActiveScheme
+        # Extract the power plan name from the output using regex
+        if ($powerPlanRaw -match '\((.*?)\)'){
+          $powerPlanName = $matches[1]
+        }
+        else {
+          $powerPlanName = $powerPlanRaw
+        }
         $batteryReport = if (Get-CimInstance -ClassName Win32_Battery) {
           Get-CimInstance -ClassName Win32_Battery | Select-Object @{Name = "BatteryStatus"; Expression = {
               switch ($_.BatteryStatus) {
@@ -197,7 +204,7 @@ $tasks = @(
           "No battery detected"
         }
         @{
-          PowerPlan   = $powerPlan
+          PowerPlan   = $powerPlanName
           BatteryInfo = $batteryReport
         }
       }
@@ -256,7 +263,7 @@ $tasks = @(
         # Initialize variables
         $largeFiles = [System.Collections.ArrayList]::new()
         $totalScanned = 0
-        $errorCount = 0
+        $errors = @()  # Initialize error container
         $GB = 1GB
 
         Write-Host "`nStarting file scan..." -ForegroundColor Yellow
@@ -284,13 +291,13 @@ $tasks = @(
           # Show progress every 100 files
           if ($totalScanned % 100 -eq 0) {
             $currentPath = $file.DirectoryName
-            if ($currentPath.Length > 50) {
+            if ($currentPath.Length -gt 50) {
               $currentPath = '...' + $currentPath.Substring($currentPath.Length - 50)
             }
             Write-Host "Files scanned: $totalScanned | Current: $currentPath" -ForegroundColor Gray
           }
 
-          # Skip excluded paths
+          # Skip files in excluded paths
           if (-not ($excludedPaths | Where-Object { $file.FullName.StartsWith($_, [StringComparison]::OrdinalIgnoreCase) })) {
             # Check file size
             if ($file.Length -ge ($minSizeGB * $GB)) {
@@ -305,7 +312,7 @@ $tasks = @(
           }
         }
 
-        # Count access errors
+        # Count access errors (if any)
         $errorCount = ($errors | Where-Object { $_ -is [System.UnauthorizedAccessException] }).Count
 
         Write-Host "`nScan Summary:" -ForegroundColor Yellow
@@ -336,7 +343,7 @@ Write-Host "Large files (>$minSizeGB GB) will be highlighted in green as they ar
 
 $findLargeFilesTask = $tasks | Where-Object { $_.Name -eq "FindLargeFiles" }
 $largeFilesResult = & $findLargeFilesTask.ScriptBlock -minSizeGB $minSizeGB
-$results = @{}
+$results = @{ }
 $results["FindLargeFiles"] = @($largeFilesResult)
 
 # Start other tasks as background jobs
