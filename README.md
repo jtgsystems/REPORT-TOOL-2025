@@ -1,3 +1,5 @@
+![Banner](banner.png)
+
 # System Report Tool 2025
 
 ## Description
