@@ -483,3 +483,9 @@ Last Updated: 2025-10-26
 Project Version: 1.0
 PowerShell Version Compatibility: 5.1+
 Windows Compatibility: 7/8/10/11, Server 2008 R2+
+
+## Framework Versions
+
+- No major frameworks detected in this project
+- This may be a utility script, documentation project, or uses custom dependencies
+
