@@ -479,13 +479,15 @@ $minSizeGB = 1.0  # Only files > 1 GB
 
 ---
 
-Last Updated: 2025-10-26
+Last Updated: 2025-12-26
 Project Version: 1.0
 PowerShell Version Compatibility: 5.1+
 Windows Compatibility: 7/8/10/11, Server 2008 R2+
 
 ## Framework Versions
 
-- No major frameworks detected in this project
-- This may be a utility script, documentation project, or uses custom dependencies
+- PowerShell 5.1+ (built-in on Windows 10/11)
+- .NET Framework 3.5+ (for System.Speech text-to-speech)
+- Windows Management Instrumentation (WMI/CIM) - built-in
+- No external package dependencies required
 
